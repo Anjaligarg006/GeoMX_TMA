@@ -1,0 +1,46 @@
+Jai Babe Di
+Jai Guru Maa Ji
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+```{r}
+library(ggplot2)
+
+```
+
+
+```{r}
+
+celldecon <- read_excel("~/Desktop/GeoMX_TMA/Data/Copy of Tertile_celldecon_IHC.xlsx", sheet = "all")
+
+
+r <- round(cor(celldecon$macrophagesSCORE, celldecon$CD204SCORE), 2)
+p <- cor.test(celldecon$macrophagesSCORE, celldecon$CD204SCORE)$p.value
+
+
+pdf("~/Desktop/GeoMX_TMA/plots/revision_data/macrophages_CD204_CV.pdf", width = 6, height = 4, bg = "white")
+
+ggplot(celldecon, aes(y=macrophagesSCORE, x=CD204SCORE)) + 
+  geom_point() + 
+  geom_smooth(method="lm", col="black") + 
+  annotate("text", x=1.5, y=1, label=paste0("r = ", r), hjust=0) +
+  annotate("text", x=1.25, y=1, label=paste0("p = ", scientific(p), hjust=0)) +
+  theme_classic() 
+```
+
+```{r}
+r1 <- round(cor(celldecon$CD8.T.cellsSCORE, celldecon$CD3SCORE), 2)
+p1 <- cor.test(celldecon$CD8.T.cellsSCORE, celldecon$CD3SCORE)$p.value
+
+pdf("~/Desktop/GeoMX_TMA/plots/revision_data/CD8.T_CD3_CV.pdf", width = 6, height = 4, bg = "white")
+ggplot(celldecon, aes(y=CD8.T.cellsSCORE, x=CD3SCORE)) + 
+  geom_point() + 
+  geom_smooth(method="lm", col="black") + 
+  annotate("text", x=1.5, y=1, label=paste0("r = ", r1), hjust=0) +
+  annotate("text", x=1.25, y=1, label=paste0("p = ", scientific(p1), hjust=0)) +
+  theme_classic() 
+```
+

@@ -1,0 +1,75 @@
+Jai Babe Di
+Jai Guru Maa Ji
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(nanostringr)
+library(ComplexHeatmap)
+library(dplyr)
+library(ggplot2)
+library(circlize)
+library(DESeq2)
+library(readxl)
+library(reshape2)
+library(msigdbr)
+library(fgsea)
+library(GSEABase)
+library(enrichplot)
+library(clusterProfiler)
+library(enrichplot)
+library(data.table)
+set.seed(1234)
+```
+
+```{r}
+OS_genes <- read.csv("~/Desktop/GeoMX_TMA/output_files/revision_data/DEG_OS_sample.csv",sep = ",") # if we select p<0.05 only two pathways came out
+OS_genes$logFc <- OS_genes$Estimate 
+```
+
+```{r}
+msigdbr_df <- msigdbr(species = "dog", category = "H")
+# select only DEGs 
+msigdbr_df <- msigdbr_df[msigdbr_df$gene_symbol %in% OS_genes$Gene,]
+msigdbr_list = split(x = msigdbr_df$gene_symbol, f = msigdbr_df$gs_name)
+```
+
+```{r}
+names(msigdbr_list) <- gsub("HALLMARK_","",names(msigdbr_list))
+```
+
+
+```{r}
+ranks1 <- OS_genes$logFc
+names(ranks1) <- OS_genes$Gene
+ranks1 <- sort(ranks1, decreasing = T)
+```
+
+```{r}
+fgseaRes <- fgsea(pathways = msigdbr_list, 
+                  stats    = ranks1,
+                  minSize  = 15,
+                  maxSize  = 500)
+
+fgseaRes<- fgseaRes[fgseaRes$padj<0.05,]
+```
+
+```{r}
+topPathwaysUp <- fgseaRes[ES > 0][head(order(pval), n=10), pathway] # pathways up in low DFI 
+topPathwaysDown <- fgseaRes[ES < 0][head(order(pval), n=10), pathway] # pathways down in low DFI 
+topPathways <- c(topPathwaysUp, rev(topPathwaysDown))
+
+pdf("~/Desktop/GeoMX_TMA/plots/revision_data/pathways_OS_ed.pdf", width = 10, height = 6, bg = "white")
+plotGseaTable(msigdbr_list[topPathways], ranks1, fgseaRes, 
+              gseaParam=0.5)
+```
+
+
+```{r}
+fwrite(fgseaRes, file="~/Desktop/GeoMX_TMA/output_files/revision_data/OS_pathways_fgseaRes_ed.txt", sep="\t", sep2=c("", " ", ""))
+
+saveRDS(msigdbr_list, file="~/Desktop/GeoMX_TMA/output_files/revision_data/OS_pathways_fgseaRes_ed.rds")
+```
+

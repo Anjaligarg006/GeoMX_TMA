@@ -1,0 +1,52 @@
+Jai Babe Di
+Jai Guru Maa Ji
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(PCAtools)
+```
+
+
+```{r}
+target_demoData_OS_sample <- readRDS("~/Desktop/GeoMX_TMA/output_files/revision_data/01_normalized_OS_samples_filtered.RDS")
+q3.norm.counts.df <- as.data.frame(target_demoData_OS_sample@assayData$q_norm)
+
+```
+
+```{r}
+# Convert counts to log2
+q3.log.counts.df <- q3.norm.counts.df %>% 
+  mutate_all(~ log2(.)) %>% 
+  rename_all(~ gsub("\\.dcc", "", .))
+
+# Remove the negative controls from the log counts
+control.probes <- c("Negative Probe")
+q3.log.counts.df <- q3.log.counts.df[!(rownames(q3.log.counts.df) %in% control.probes), ]
+q3.log.counts.df <- q3.log.counts.df[order(colnames(q3.log.counts.df))]
+
+# Load the annotation (same for both normalization types)
+annotation <- pData(target_demoData_OS_sample)
+rownames(annotation) <- gsub("\\.dcc", "", rownames(annotation))
+
+# Generate a PCA table for all samples for both normalization types
+q3.pca.table <- pca(q3.log.counts.df, 
+                 metadata = annotation, 
+                 removeVar = 0.1)
+
+q3.pca.plot.dfi <- biplot(q3.pca.table, 
+                         colby = "DFI_sum", 
+                         colkey =  c("low_DFI" = "steelblue", "high_DFI" = "tomato"),
+                         legendPosition = "right", 
+                         legendLabSize = 6, 
+                         legendIconSize = 3, 
+                         lab = NULL,
+                         title = "Q3 Normalization", 
+                         subtitle = "")
+
+pdf("~/Desktop/GeoMX_TMA/plots/revision_data/pca_q3plot.pdf", bg = "white", height = 5 , width = 6)
+print(q3.pca.plot.dfi)
+```
+

@@ -1,0 +1,196 @@
+Jai Babe Di
+Jai Guru Maa Ji
+
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library("edgeR")
+library("readxl")
+library("matrixStats")
+library("fgsea")
+library("tidyverse")
+library("msigdbr")
+library("clusterProfiler")
+library("ComplexHeatmap")
+library("tidyr")
+library(ggVennDiagram)
+set.seed(1234)
+```
+
+
+```{r}
+target_demoData_OS_sample <- readRDS("~/Desktop/GeoMX_TMA/output_files/revision_data/01_normalized_OS_samples_filtered.RDS")
+clinical_metadata<- read_excel("~/Desktop/GeoMX_TMA/Data/COTC021, 026 and 030 Demographics and NAS 11-26-24.xlsx", sheet = "COTC021 22")
+
+df<- pData(target_demoData_OS_sample)
+
+merge_data <- merge(df, clinical_metadata, by.x ="Case", by.y ="Patient ID...82", all.x =TRUE)
+
+merge_data$DFI_num <- ifelse(merge_data$DFI_sum == "high_DFI", 1, 0)
+
+```
+```{r}
+data.frame(merge_data$Case, merge_data$`RNAseq (tumor )`)
+unique(merge_data$`RNAseq (tumor )`)
+```
+
+```{r}
+Xdata1 <-read.delim('~/Desktop/GeoMX_TMA/Data/RNASeq/CS029382_RawCountFile_rsemgenes.txt',header=TRUE)#RNA Count Data 
+colnames(Xdata1)<- gsub("X","",colnames(Xdata1))
+
+Xdata2 <-read.delim('~/Desktop/GeoMX_TMA/Data/RNASeq/CS028195_RawCountFile_rsemgenes.txt',header=TRUE)#RNA Count Data 
+colnames(Xdata2)<- gsub("X","",colnames(Xdata2))
+```
+
+```{r}
+# sample name edit
+colnames(Xdata1)<- gsub("_tumor|__Tumor","_prim_OS",colnames(Xdata1))
+colnames(Xdata1)<- gsub("^[0-9]_","",colnames(Xdata1))
+colnames(Xdata1)<- gsub("^[0-9][0-9]_","",colnames(Xdata1))
+colnames(Xdata1)<- gsub("^[0-9][0-9][0-9]_","",colnames(Xdata1))
+colnames(Xdata1)<- gsub("_RNAla_Ter_","",colnames(Xdata1))
+colnames(Xdata1)<- gsub("Me_T__","MET_",colnames(Xdata1))
+colnames(Xdata1)<- toupper(colnames(Xdata1))
+gsub("_[0-9]","",Xdata1$GENE_ID) -> Xdata1$GENE_ID
+
+colnames(Xdata2)<- gsub("_tumor|__Tumor|_Tumor","_prim_OS",colnames(Xdata2))
+colnames(Xdata2)<- gsub("^[0-9]_","",colnames(Xdata2))
+colnames(Xdata2)<- gsub("^[0-9][0-9]_","",colnames(Xdata2))
+colnames(Xdata2)<- gsub("Me_T__","MET_",colnames(Xdata2))
+colnames(Xdata2)<- gsub("_RNAla_Ter_","",colnames(Xdata2))
+colnames(Xdata2)<- toupper(colnames(Xdata2))
+Xdata2$GENE_ID <- gsub("_[0-9]","",Xdata2$GENE_ID) 
+
+# select only primary OS
+Xdata1 <- Xdata1[grep("MET", colnames(Xdata1), invert =TRUE)]
+Xdata2 <- Xdata2[grep("MET", colnames(Xdata2), invert =TRUE)]
+
+merge_data1 <- merge(Xdata1, Xdata2, by = c("GENE_ID", "GENE_ID"), all.x = T)
+
+# removed duplicated gene
+
+merge_data1 <- merge_data1[grep(paste0(c(merge_data$`Patient ID...28`,"GENE_ID"), collapse = "|" ), colnames(merge_data1))]
+duplicated_genes <- unique(merge_data1$GENE_ID[duplicated(merge_data1$GENE_ID)])
+merge_data1 <- merge_data1[!merge_data1$GENE_ID %in% duplicated_genes,]
+merge_data1[is.na(merge_data1)] <- 0
+colnames(merge_data1)<- gsub("_PRIM_OS","",colnames(merge_data1))
+
+
+write.csv(merge_data1, "~/Desktop/GeoMX_TMA/output_files/revision_data/RNAseq_count_data.csv")
+```
+
+```{r}
+# make annotation file
+
+label_data <- merge_data
+label_data<- label_data[match(colnames(merge_data1)[-1], label_data$`Patient ID...28`), ]
+rownames(label_data) <- label_data$`Patient ID...28`
+
+write.csv(label_data, "~/Desktop/GeoMX_TMA/output_files/revision_data/RNAseq_metadat_info.csv")
+
+groups = factor(label_data$DFI_sum, c("high_DFI", "low_DFI"))
+genes <- merge_data1$GENE_ID
+names(genes) <- genes
+merge_data1$GENE_ID <- NULL
+
+counts.DGEList <- DGEList(counts = merge_data1, genes = genes, group = as.factor(groups))
+counts.keep <- filterByExpr(y = counts.DGEList)
+counts.DGEList <- counts.DGEList[counts.keep, , keep.lib.sizes = FALSE]
+counts.DGEList <- calcNormFactors(counts.DGEList)
+counts.DGEList <- estimateDisp(counts.DGEList,design = model.matrix(~groups))
+high_low_DFI.DGEExact <- exactTest(counts.DGEList, pair = c("high_DFI","low_DFI"))
+
+DEGlist <- cbind(high_low_DFI.DGEExact$genes, high_low_DFI.DGEExact$table)
+
+
+write.csv(DEGlist, file='~/Desktop/GeoMX_TMA/output_files/revision_data/RNAseq_DEG_complete_list.csv')
+
+
+```
+
+
+
+
+```{r}
+DEGlist.ed <- DEGlist[DEGlist$PValue<0.05,]
+up_gene1 <- DEGlist.ed$genes[DEGlist.ed$logFC>0]
+down_gene1 <- DEGlist.ed$genes[DEGlist.ed$logFC<0]
+
+```
+
+```{r}
+OS_genes <- read.csv("~/Desktop/GeoMX_TMA/output_files/revision_data/DEG_OS_sample.csv",sep = ",") # if we select p<0.05 only two pathways came out
+OS_genes$logFc <- OS_genes$Estimate 
+OS_genes$pval <- OS_genes$Pr...t..
+
+OS_genes.ed <- OS_genes[OS_genes$pval<0.05,]
+up_gene2 <- OS_genes.ed$Gene[OS_genes.ed$logFc>0]
+down_gene2 <- OS_genes.ed$Gene[OS_genes.ed$logFc<0]
+```
+
+```{r}
+all_gene_list <- list(up_gene1, up_gene2, down_gene1, down_gene2)
+names(all_gene_list) <- c("G.up", "R.up", "G.down", "R.down")
+
+p1 <- ggVennDiagram(all_gene_list, color = 1, lwd = 0.7,label = c("count"),label_size = 14, set_size = 14) + 
+ scale_fill_gradient(low = "#F4FAFE", high = "#4981BF") +
+ theme(legend.position = "Center")+ggtitle("DEG genes")+
+   theme(text = element_text(size = 12, face = "bold"))
+p1
+
+pdf("~/Desktop/GeoMX_TMA/plots/revision_data/RNAseq_Geomx_commgene.pdf", width = 16, height = 16)
+p1
+```
+
+
+```{r}
+library(venn)
+ItemsList <- venn(all_gene_list, show.plot = FALSE)
+list_comm <- attributes(ItemsList)$intersections
+
+lengths(attributes(ItemsList)$intersections)
+
+df <- as.data.frame(do.call(cbind, lapply(list_comm, function(x) 
+  `length<-`(x, max(lengths(list_comm)))
+  )))
+write.csv(df,"~/Desktop/GeoMX_TMA/output_files/revision_data/RNAseq_Geomx_commgene.csv")
+```
+```{r}
+DEGlist <- read.csv('~/Desktop/GeoMX_TMA/output_files/revision_data/RNAseq_DEG_complete_list.csv')
+DEGlist <- DEGlist[-1]
+```
+
+```{r}
+msigdbr_df <- msigdbr(species = "dog", category = "H")
+# select only DEGs 
+msigdbr_df <- msigdbr_df[msigdbr_df$gene_symbol %in% DEGlist$genes,]
+msigdbr_list = split(x = msigdbr_df$gene_symbol, f = msigdbr_df$gs_name)
+names(msigdbr_list) <- gsub("HALLMARK_","",names(msigdbr_list))
+
+ranks1 <- DEGlist$logFC
+names(ranks1) <- DEGlist$genes
+ranks1 <- sort(ranks1, decreasing = T)
+```
+
+```{r}
+fgseaRes <- fgsea(pathways = msigdbr_list, 
+                  stats    = ranks1,
+                  minSize  = 15,
+                  maxSize  = 500)
+
+fgseaRes<- fgseaRes[fgseaRes$padj<0.05,]
+```
+
+```{r}
+topPathwaysUp <- fgseaRes[ES > 0][head(order(pval), n=10), pathway] # pathways up in low DFI 
+topPathwaysDown <- fgseaRes[ES < 0][head(order(pval), n=10), pathway] # pathways down in low DFI 
+topPathways <- c(topPathwaysUp, rev(topPathwaysDown))
+
+pdf("~/Desktop/GeoMX_TMA/plots/revision_data/RNAseq_pathways.pdf", width = 10, height = 4, bg = "white")
+plotGseaTable(msigdbr_list[topPathways], ranks1, fgseaRes, 
+              gseaParam=0.5)
+```
+

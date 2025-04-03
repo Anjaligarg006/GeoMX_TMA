@@ -1,0 +1,45 @@
+Jai Babe Di
+Jai Guru Maa Ji
+
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(survminer)
+library(survival)
+```
+
+
+```{r}
+target_demoData_OS_sample <- readRDS("~/Desktop/GeoMX_TMA/output_files/revision_data/01_normalized_OS_samples_filtered.RDS")
+clinical_metadata<- read_excel("~/Desktop/GeoMX_TMA/Data/COTC021, 026 and 030 Demographics and NAS 11-26-24.xlsx", sheet = "COTC021 22")
+df<- pData(target_demoData_OS_sample)
+
+merge_data <- merge(df, clinical_metadata, by.x ="Case", by.y ="Patient ID...82", all.x =TRUE)
+
+merge_data$DFI_num <- ifelse(merge_data$DFI_sum == "high_DFI", 1, 0)
+
+```
+
+
+```{r}
+surv_object1 <- Surv(time = as.numeric(merge_data$DFI), 
+                      event = as.numeric(merge_data$DFI_censor)
+                    )
+
+fit1 <- survfit(surv_object1 ~ DFI_num, data = merge_data)
+
+```
+
+```{r}
+
+pdf("~/Desktop/GeoMX_TMA/plots/revision_data/survival_plot.pdf", width = 6, height = 4, bg = "white")
+ggsurvplot(fit1, conf.int=TRUE, pval=TRUE, risk.table=FALSE, 
+           legend.labs=c("Low", "High"), legend.title="DFI",  
+           palette=c("#0072B2","tomato"), 
+           title="Kaplan-Meier Curve")
+
+```
+

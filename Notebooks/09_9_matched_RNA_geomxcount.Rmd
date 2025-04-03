@@ -1,0 +1,104 @@
+Jai Babe Di
+Jai Guru Maa Ji
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(nanostringr)
+library(ComplexHeatmap)
+library(dplyr)
+library(ggplot2)
+library(circlize)
+library(DESeq2)
+library(readxl)
+library(reshape2)
+library(msigdbr)
+library(fgsea)
+library(GSEABase)
+library(enrichplot)
+library(clusterProfiler)
+library(enrichplot)
+library(data.table)
+set.seed(1234)
+```
+
+
+
+```{r}
+target_demoData_OS_sample <- readRDS("~/Desktop/GeoMX_TMA/output_files/revision_data/9_matched_RNA_geomxcount.RDS")
+```
+
+
+```{r}
+
+assayDataElement(object = target_demoData_OS_sample, elt = "log_q") <-
+    assayDataApply(target_demoData_OS_sample, 2, FUN = log, base = 2, elt = "q_norm")
+
+# run LMM:
+# formula follows conventions defined by the lme4 package
+
+    mixedOutmc <-
+        mixedModelDE(target_demoData_OS_sample,
+                     elt = "log_q",
+                     modelFormula = ~ DFI_sum + (1 + DFI_sum | slide),
+                     groupVar = "DFI_sum",  
+                     nCores = parallel::detectCores(),
+                     multiCore = FALSE)
+
+    # format results as data.frame
+    r_test <- do.call(rbind, mixedOutmc["lsmeans", ])
+    tests <- rownames(r_test)
+    r_test <- as.data.frame(r_test)
+    r_test$Contrast <- tests
+
+    # use lapply in case you have multiple levels of your test factor to
+    # correctly associate gene name with it's row in the results table
+    r_test$Gene <-
+        unlist(lapply(colnames(mixedOutmc),
+                      rep, nrow(mixedOutmc["lsmeans", ][[1]])))
+    r_test$FDR <- p.adjust(r_test$`Pr(>|t|)`, method = "fdr")
+    r_test <- r_test[, c("Gene", "Contrast", "Estimate",
+                         "Pr(>|t|)", "FDR")]
+    results<- r_test
+# DEG enriched in low DFI as compared to high DFI
+write.csv(results,"~/Desktop/GeoMX_TMA/output_files/revision_data/9_matched_RNA_geomxcount_DEG_OS_sample.csv", quote = F, row.names = F)
+```
+
+```{r}
+results$logFc <- results$Estimate 
+msigdbr_df <- msigdbr(species = "dog", category = "H")
+# select only DEGs 
+msigdbr_df <- msigdbr_df[msigdbr_df$gene_symbol %in% results$Gene,]
+msigdbr_list = split(x = msigdbr_df$gene_symbol, f = msigdbr_df$gs_name)
+names(msigdbr_list) <- gsub("HALLMARK_","",names(msigdbr_list))
+
+ranks1 <- results$logFc
+names(ranks1) <- results$Gene
+ranks1 <- sort(ranks1, decreasing = T)
+
+fgseaRes <- fgsea(pathways = msigdbr_list, 
+                  stats    = ranks1,
+                  minSize  = 15,
+                  maxSize  = 500)
+
+fgseaRes<- fgseaRes[fgseaRes$padj<0.05,]
+```
+
+```{r}
+topPathwaysUp <- fgseaRes[ES > 0][head(order(pval), n=10), pathway] # pathways up in low DFI 
+topPathwaysDown <- fgseaRes[ES < 0][head(order(pval), n=10), pathway] # pathways down in low DFI 
+topPathways <- c(topPathwaysUp, rev(topPathwaysDown))
+
+pdf("~/Desktop/GeoMX_TMA/plots/revision_data/9_matched_RNA_geomxcount_pathways_OS_ed.pdf", width = 10, height = 6, bg = "white")
+plotGseaTable(msigdbr_list[topPathways], ranks1, fgseaRes, 
+              gseaParam=0.5)
+```
+
+```{r}
+fwrite(fgseaRes, file="~/Desktop/GeoMX_TMA/output_files/revision_data/9_matched_RNA_geomxcount_OS_pathways_fgseaRes_ed.txt", sep="\t", sep2=c("", " ", ""))
+
+saveRDS(msigdbr_list, file="~/Desktop/GeoMX_TMA/output_files/revision_data/9_matched_RNA_geomxcount_OS_pathways_fgseaRes_ed.rds")
+```
+

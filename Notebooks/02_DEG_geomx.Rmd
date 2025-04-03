@@ -1,0 +1,167 @@
+Jai Babe Di
+Jai Guru Maa Ji
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(NanoStringNCTools)
+library(GeomxTools)
+library(GeoMxWorkflows)
+library(knitr)
+library(reshape2)
+library(cowplot)
+library(ggplot2)
+library(scales) 
+library(umap)
+library(Rtsne)
+library(pheatmap)
+library(dplyr)
+library(ggrepel)
+library(readxl)
+setwd("~/Desktop/GeoMX_TMA/notebook/")
+```
+
+
+```{r}
+target_demoData_Control_sample <- readRDS("~/Desktop/GeoMX_TMA/output_files/01_normalized_Control_samples.RDS")
+target_demoData_OS_sample <- readRDS("~/Desktop/GeoMX_TMA/output_files/01_normalized_OS_samples.RDS")
+
+low_DFI <- read_excel("~/Desktop/GeoMX_TMA/Tertile_sample_info.xlsx", sheet = "low_DFI")
+high_DFI <- read_excel("~/Desktop/GeoMX_TMA/Tertile_sample_info.xlsx", sheet = "high_DFI")
+mid_DFI <- read_excel("~/Desktop/GeoMX_TMA/Tertile_sample_info.xlsx", sheet = "mid_DFI")
+```
+
+```{r}
+
+# filter the samples on the basis of tertile
+
+patient_include <- unique(c(low_DFI$Case, high_DFI$Case))
+
+target_demoData_OS_sample <- subset(target_demoData_OS_sample, select = phenoData(target_demoData_OS_sample)[["Case"]] %in% patient_include)
+
+dim(target_demoData_OS_sample)
+```
+
+
+```{r}
+#target_demoData_OS_sample@phenoData@data$Case <- as.numeric(target_demoData_OS_sample@phenoData@data$Case) 
+
+
+pData(target_demoData_OS_sample)[["DFI_sum"]][pData(target_demoData_OS_sample)["Case"] == c(1701)] <- "low_DFI"
+pData(target_demoData_OS_sample)[["DFI_sum"]][pData(target_demoData_OS_sample)["Case"] == c(2203)] <- "low_DFI"
+pData(target_demoData_OS_sample)[["DFI_sum"]][pData(target_demoData_OS_sample)["Case"] == c(901)] <- "low_DFI"
+pData(target_demoData_OS_sample)[["DFI_sum"]][pData(target_demoData_OS_sample)["Case"] == c(1405)] <- "low_DFI"
+pData(target_demoData_OS_sample)[["DFI_sum"]][pData(target_demoData_OS_sample)["Case"] == c(1403)] <- "low_DFI"
+pData(target_demoData_OS_sample)[["DFI_sum"]][pData(target_demoData_OS_sample)["Case"] == c(309)] <- "low_DFI"
+pData(target_demoData_OS_sample)[["DFI_sum"]][pData(target_demoData_OS_sample)["Case"] == c(214)] <- "low_DFI"
+pData(target_demoData_OS_sample)[["DFI_sum"]][pData(target_demoData_OS_sample)["Case"] == c(2204)] <- "low_DFI"
+pData(target_demoData_OS_sample)[["DFI_sum"]][pData(target_demoData_OS_sample)["Case"] == c(701)] <- "high_DFI"
+pData(target_demoData_OS_sample)[["DFI_sum"]][pData(target_demoData_OS_sample)["Case"] == c(706)] <- "high_DFI"
+pData(target_demoData_OS_sample)[["DFI_sum"]][pData(target_demoData_OS_sample)["Case"] == c(1002)] <- "high_DFI"
+pData(target_demoData_OS_sample)[["DFI_sum"]][pData(target_demoData_OS_sample)["Case"] == c(809)] <- "high_DFI"
+pData(target_demoData_OS_sample)[["DFI_sum"]][pData(target_demoData_OS_sample)["Case"] == c(2206)] <- "high_DFI"
+pData(target_demoData_OS_sample)[["DFI_sum"]][pData(target_demoData_OS_sample)["Case"] == c(1001)] <- "high_DFI"
+pData(target_demoData_OS_sample)[["DFI_sum"]][pData(target_demoData_OS_sample)["Case"] == c(601)] <- "high_DFI"
+pData(target_demoData_OS_sample)[["DFI_sum"]][pData(target_demoData_OS_sample)["Case"] == c(501)] <- "high_DFI"
+
+```
+
+
+
+
+```{r}
+# convert test variables to factors
+
+pData(target_demoData_OS_sample)$DFI_sum <-
+    factor(pData(target_demoData_OS_sample)$DFI_sum, c("low_DFI", "high_DFI"))
+pData(target_demoData_OS_sample)[["slide"]] <-
+    factor(pData(target_demoData_OS_sample)[["Slide Name"]], )
+
+saveRDS(target_demoData_OS_sample, "~/Desktop/GeoMX_TMA/output_files/revision_data/01_normalized_OS_samples_filtered.RDS")
+
+assayDataElement(object = target_demoData_OS_sample, elt = "log_q") <-
+    assayDataApply(target_demoData_OS_sample, 2, FUN = log, base = 2, elt = "q_norm")
+
+# run LMM:
+# formula follows conventions defined by the lme4 package
+
+    mixedOutmc <-
+        mixedModelDE(target_demoData_OS_sample,
+                     elt = "log_q",
+                     modelFormula = ~ DFI_sum + (1 + DFI_sum | slide),
+                     groupVar = "DFI_sum",  
+                     nCores = parallel::detectCores(),
+                     multiCore = FALSE)
+
+    # format results as data.frame
+    r_test <- do.call(rbind, mixedOutmc["lsmeans", ])
+    tests <- rownames(r_test)
+    r_test <- as.data.frame(r_test)
+    r_test$Contrast <- tests
+
+    # use lapply in case you have multiple levels of your test factor to
+    # correctly associate gene name with it's row in the results table
+    r_test$Gene <-
+        unlist(lapply(colnames(mixedOutmc),
+                      rep, nrow(mixedOutmc["lsmeans", ][[1]])))
+    r_test$FDR <- p.adjust(r_test$`Pr(>|t|)`, method = "fdr")
+    r_test <- r_test[, c("Gene", "Contrast", "Estimate",
+                         "Pr(>|t|)", "FDR")]
+    results<- r_test
+# DEG enriched in low DFI as compared to high DFI
+write.csv(results,"~/Desktop/GeoMX_TMA/output_files/revision_data/DEG_OS_sample.csv", quote = F, row.names = F)
+
+#Volcano plot
+# Categorize Results based on P-value & FDR for plotting
+results$Color <- "NS or FC < 0.5"
+results$Color[results$`Pr(>|t|)` < 0.05] <- "P < 0.05"
+results$Color[results$FDR < 0.05] <- "FDR < 0.05"
+results$Color[results$FDR < 0.001] <- "FDR < 0.001"
+results$Color[abs(results$Estimate) < 0.5] <- "NS or FC < 0.5"
+results$Color <- factor(results$Color,
+                        levels = c("NS or FC < 0.5", "P < 0.05",
+                                   "FDR < 0.05", "FDR < 0.001"))
+
+# pick top genes for either side of volcano to label
+# order genes for convenience:
+results$invert_P <- (-log10(results$`Pr(>|t|)`)) * sign(results$Estimate)
+top_g <- c()
+    top_g <- c(top_g,
+               results[, 'Gene'][ order(results[, 'invert_P'], decreasing = TRUE)[1:15]],
+               results[, 'Gene'][order(results[, 'invert_P'], decreasing = FALSE)[1:15]])
+    
+top_g <- unique(top_g)
+results <- results[, -1*ncol(results)] # remove invert_P from matrix
+
+genes_text <- subset(results, Gene %in% top_g)
+genes_text <- genes_text[genes_text$Color != "NS or FC < 0.5",]
+
+# Graph results
+p1 <- ggplot(results,
+       aes(x = Estimate, y = -log10(`Pr(>|t|)`),
+           color = Color, label = Gene)) +
+    geom_vline(xintercept = c(0.5, -0.5), lty = "dashed") +
+    geom_hline(yintercept = -log10(0.05), lty = "dashed") +
+    geom_point() +
+    labs(x = "Enriched in high DFI <- log2(FC) -> Enriched in low DFI",
+         y = "Significance, -log10(P)",
+         color = "Significance") +
+    scale_color_manual(values = c(`FDR < 0.001` = "dodgerblue",
+                                  `FDR < 0.05` = "lightblue",
+                                  `P < 0.05` = "orange2",
+                                  `NS or FC < 0.5` = "gray"),
+                       guide = guide_legend(override.aes = list(size = 4))) +
+    scale_y_continuous(expand = expansion(mult = c(0,0.05))) +
+    geom_text_repel(data = genes_text,
+                    size = 4, point.padding = 0.15, color = "black",
+                    min.segment.length = .1, box.padding = .2, lwd = 2,
+                    max.overlaps = 50) +
+    theme_bw(base_size = 12) +
+    theme(legend.position = "bottom")
+p1
+ggsave("~/Desktop/GeoMX_TMA/plots/revision_data/DEG_volcanoplot_OS_sample.pdf",plot = p1, width = 6, height = 6)
+```
+
+

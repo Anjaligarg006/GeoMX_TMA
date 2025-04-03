@@ -1,0 +1,139 @@
+Jai Babe Di
+Jai Guru Maa Ji
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(SpatialDecon)
+library(GeomxTools)
+library(reshape2)
+library(MCPcounter)
+data("safeTME")
+data("safeTME.matches")
+library(ggplot2)
+library(ggstats)
+```
+
+
+```{r}
+# rna seq cell type
+
+RNAseq_count <- read.csv("~/Desktop/GeoMX_TMA/output_files/revision_data/RNAseq_count_data.csv")
+rownames(RNAseq_count) <- RNAseq_count$GENE_ID
+RNAseq_count<- RNAseq_count[-(1:2)]
+colnames(RNAseq_count) <- gsub("^X","",colnames(RNAseq_count))
+
+ExampleEstimates <- t(MCPcounter.estimate(expression = log2(RNAseq_count+1), featuresType = "HUGO_symbols", probesets = "~/Desktop/GeoMX_TMA/Data/MCP counter deconvolution list.csv"))
+
+data_long1 <- melt(ExampleEstimates,
+                  variable.name = "Cell_Type", 
+                  value.name = "Value")
+data_long1$Value <- as.numeric(data_long1$Value)
+data_long1$Var2 <- as.factor(data_long1$Var2)
+
+```
+
+
+
+```{r}
+# geomx cell type
+patient_include <- colnames(RNAseq_count)
+patient_include <- gsub("^0","", patient_include)
+
+target_demoData_OS_sample <- readRDS("~/Desktop/GeoMX_TMA/output_files/revision_data/01_normalized_OS_samples_filtered.RDS")
+
+target_demoData_OS_sample <- subset(target_demoData_OS_sample, select = phenoData(target_demoData_OS_sample)[["Case"]] %in% patient_include)
+
+saveRDS(target_demoData_OS_sample, "~/Desktop/GeoMX_TMA/output_files/revision_data/9_matched_RNA_geomxcount.RDS")
+
+# run spatialdecon with all the bells and whistles:
+restils = runspatialdecon(object = target_demoData_OS_sample,
+                          norm_elt = "q_norm",  # normalized data
+                          raw_elt = "exprs",    # expected background counts for every data point in norm
+                          X = safeTME,                            # safeTME matrix, used by default
+                          cellmerges = safeTME.matches,           # safeTME.matches object, used by default
+                          cell_counts = target_demoData_OS_sample[["Nuclei"]], # nuclei counts, used to estimate total cells
+                          n_tumor_clusters = 5) 
+
+
+df <- data.frame("Case"=target_demoData_OS_sample@phenoData@data$Case, "slide_name"=rownames(target_demoData_OS_sample@phenoData@data))
+
+data_long2 <- melt(restils$prop_of_all,
+                  variable.name = "Cell_Type", 
+                  value.name = "Value")
+data_long2$Value <- as.numeric(data_long2$Value)
+data_long2$Var2 <- as.factor(data_long2$Var2)
+
+data_long2 <- merge(data_long2, df, by.x= "Var1", by.y= "slide_name", all.X =TRUE)
+data_long2$Var1 <- data_long2$Case
+data_long2<- data_long2[-4]
+
+```
+
+```{r}
+sample_order <- rownames(ExampleEstimates)
+
+data_long2 <- data_long2[data_long2$Var2 %in% c("CD4.T.cells",  "CD8.T.cells","Treg","B","NK","monocytes","mDCs","pDC","neutrophils","endothelial.cells","fibroblasts"),]
+
+mean_values_by_sample <- data_long2 %>%
+  group_by(Var1, Var2) %>%
+  summarise(Mean_Value = mean(Value))
+mean_values_by_sample$Var2<- as.character(mean_values_by_sample$Var2) 
+
+mean_values_by_sample$Var2[mean_values_by_sample$Var2 == "CD4.T.cells"]  <- "T cells"
+mean_values_by_sample$Var2[mean_values_by_sample$Var2 == "CD8.T.cells"]  <- "CD8 T cells"
+mean_values_by_sample$Var2[mean_values_by_sample$Var2 == "Treg"]  <- "Cytotoxic lymphocytes"
+mean_values_by_sample$Var2[mean_values_by_sample$Var2 == "B"]  <- "B lineage"
+mean_values_by_sample$Var2[mean_values_by_sample$Var2 == "NK"]  <- "NK cells"
+mean_values_by_sample$Var2[mean_values_by_sample$Var2 == "monocytes"]  <- "Monocytic lineage"
+mean_values_by_sample$Var2[mean_values_by_sample$Var2 == "mDCs"]  <- "Myeloid dendritic cells"
+mean_values_by_sample$Var2[mean_values_by_sample$Var2 == "pDC"]  <- "Myeloid dendritic cells"
+mean_values_by_sample$Var2[mean_values_by_sample$Var2 == "neutrophils"]  <- "Neutrophils"
+mean_values_by_sample$Var2[mean_values_by_sample$Var2 == "endothelial.cells"]  <- "Endothelial cells"
+mean_values_by_sample$Var2[mean_values_by_sample$Var2 == "fibroblasts"]  <- "Fibroblasts"
+
+# to take care of Myeloid dendritic cells
+mean_values_by_sample <- mean_values_by_sample %>%
+  group_by(Var1, Var2) %>%
+  summarise(Mean_Value = mean(Mean_Value))
+
+```
+
+```{r}
+# merge both transcript info
+both_data <- merge(data_long1, mean_values_by_sample, by = c("Var1", "Var2"), all.x=T)
+both_data$Mean_Value <- both_data$Mean_Value*100
+
+write.csv(both_data,"~/Desktop/GeoMX_TMA/output_files/revision_data/RNAseq_geomx_CV.csv")
+```
+
+
+```{r}
+r <- round(cor(both_data$Value, both_data$Mean_Value), 2)
+p <- cor.test(both_data$Value, both_data$Mean_Value)$p.value
+
+
+pdf("~/Desktop/GeoMX_TMA/plots/revision_data/RNAseq_geomx_CV.pdf", width = 6, height = 4, bg = "white")
+
+ggplot(both_data, aes(y=Value, x=Mean_Value)) + 
+  geom_point(size = 0.5) + 
+  geom_smooth(method="lm", col="black") + 
+  annotate("text", x=20, y=1, label=paste0("r = ", r), hjust=0) +
+  annotate("text", x=50, y=1, label=paste0("p = ", p, hjust=0)) +
+  theme_classic()+
+  xlab("RNAseq cell type")+
+  ylab("GeoMX cell type")+
+  theme( axis.line = element_line(colour = "black", 
+                      size = 1, linetype = "solid"))+
+  theme(
+  axis.title.x = element_text(color = "black", size = 14, face = "bold"),
+  axis.title.y = element_text(color = "black", size = 14, face = "bold"))+
+  theme(axis.text.x = element_text(color = "black",face = "bold",
+                                  size = 12),
+       axis.text.y = element_text(color = "black",face = "bold",
+                                  size = 12))
+```
+
+
